@@ -1,0 +1,94 @@
+# ══════════════════════════════════════════════════════════════
+# BNDA – Configuration Apache Sécurisée
+# Conforme : OWASP Top 10, CIS Benchmarks, ISO 27001
+# ══════════════════════════════════════════════════════════════
+
+# ── 1. Redirection HTTP → HTTPS ──────────────────────────────
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# ── 2. Désactiver le listing des répertoires ──────────────────
+Options -Indexes -ExecCGI +FollowSymLinks
+
+# ── 3. Protection des fichiers sensibles ─────────────────────
+<FilesMatch "\.(sql|log|env|bak|sh|conf|ini|git|htpasswd|old|swp)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Bloquer accès direct aux fichiers PHP critiques
+<FilesMatch "^(db|auth)\.php$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Fichiers cachés (. prefixés)
+<FilesMatch "^\.">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# ── 4. En-têtes de sécurité HTTP ─────────────────────────────
+<IfModule mod_headers.c>
+    Header always set X-XSS-Protection          "1; mode=block"
+    Header always set X-Content-Type-Options    "nosniff"
+    Header always set X-Frame-Options           "DENY"
+    Header always set Referrer-Policy           "strict-origin-when-cross-origin"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set Content-Security-Policy   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none';"
+    Header always set Permissions-Policy        "geolocation=(), microphone=(), camera=()"
+    Header always set Cache-Control             "no-store, no-cache, must-revalidate"
+    Header always set Pragma                    "no-cache"
+    Header always unset X-Powered-By
+</IfModule>
+
+# ── 5. Pages d'erreur personnalisées ─────────────────────────
+ErrorDocument 400 /BNDAsecuriser/erreur.php?c=400
+ErrorDocument 401 /BNDAsecuriser/erreur.php?c=401
+ErrorDocument 403 /BNDAsecuriser/erreur.php?c=403
+ErrorDocument 404 /BNDAsecuriser/erreur.php?c=404
+ErrorDocument 500 /BNDAsecuriser/erreur.php?c=500
+
+# ── 6. Blocage des scanners et attaques courantes ─────────────
+<IfModule mod_rewrite.c>
+    # Bloquer scanners offensifs (sqlmap, nikto, etc.)
+    RewriteCond %{HTTP_USER_AGENT} (sqlmap|nikto|nessus|masscan|w3af|havij|acunetix|dirbuster) [NC]
+    RewriteRule .* - [F,L]
+
+    # Bloquer injections SQL dans l'URL
+    RewriteCond %{QUERY_STRING} (union.*select|select.*from|insert.*into|drop.*table|delete.*from|update.*set|information_schema) [NC]
+    RewriteRule .* - [F,L]
+
+    # Bloquer traversée de répertoires
+    RewriteCond %{QUERY_STRING} (\.\./|\.\.\\|%2e%2e) [NC]
+    RewriteRule .* - [F,L]
+
+    # Bloquer XSS dans l'URL
+    RewriteCond %{QUERY_STRING} (<script|javascript:|vbscript:|onload=|onerror=|onclick=) [NC]
+    RewriteRule .* - [F,L]
+</IfModule>
+
+# ── 7. Restriction des méthodes HTTP ─────────────────────────
+<LimitExcept GET POST>
+    Order Deny,Allow
+    Deny from all
+</LimitExcept>
+
+# ── 8. Limiter la taille des requêtes (anti DDoS) ────────────
+# LimitRequestBody s'applique ici ; LimitRequestFieldSize et LimitRequestFields
+# doivent être placés dans /etc/apache2/apache2.conf (directives serveur uniquement)
+LimitRequestBody 5242880
+
+# ── 9. Rate limiting sur login (anti brute-force) ────────────
+<IfModule mod_ratelimit.c>
+    <Location "/BNDAsecuriser/index.php">
+        SetOutputFilter RATE_LIMIT
+        SetEnv rate-limit 400
+    </Location>
+</IfModule>
+
+# ── 10. Compression ──────────────────────────────────────────
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript
+</IfModule>
